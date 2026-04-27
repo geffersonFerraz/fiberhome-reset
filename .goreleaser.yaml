@@ -66,9 +66,6 @@ changelog:
       - Merge branch
 
 release:
-  github:
-    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
-    name: reset-fiber-home
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"
