@@ -30,10 +30,10 @@ jobs:
         run: go install github.com/fyne-io/fyne-cross@latest
 
       - name: Build Linux (amd64)
-        run: fyne-cross linux --arch=amd64
+        run: fyne-cross linux --arch=amd64 --app-id=io.github.gfz.reset-fiber-home
 
       - name: Build Windows (amd64)
-        run: fyne-cross windows --arch=amd64
+        run: fyne-cross windows --arch=amd64 --app-id=io.github.gfz.reset-fiber-home
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
