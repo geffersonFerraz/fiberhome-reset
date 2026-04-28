@@ -26,22 +26,19 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Install fyne dependencies
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends \
-            libgl1-mesa-dev \
-            libx11-dev \
-            libxcursor-dev \
-            libxrandr-dev \
-            libxinerama-dev \
-            libxi-dev \
-            xorg-dev
+      - name: Install fyne-cross
+        run: go install github.com/fyne-io/fyne-cross@latest
+
+      - name: Build Linux (amd64)
+        run: fyne-cross linux --arch=amd64
+
+      - name: Build Windows (amd64)
+        run: fyne-cross windows --arch=amd64
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean
+          args: release --clean --skip=build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

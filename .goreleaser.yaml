@@ -8,21 +8,14 @@ before:
 
 builds:
   - id: reset-fiber-home
-    main: .
-    binary: reset-fiber-home
-    ldflags:
-      - -s -w
-      - -X main.version={{.Version}}
-      - -X main.commit={{.Commit}}
-      - -X main.date={{.Date}}
-    flags:
-      - -buildvcs=false
-    env:
-      - CGO_ENABLED=1
+    builder: prebuilt
     goos:
       - linux
+      - windows
     goarch:
       - amd64
+    prebuilt:
+      path: fyne-cross/dist/{{ .Os }}-{{ .Arch }}/{{ .ProjectName }}{{ if eq .Os "windows" }}.exe{{ end }}
 
 archives:
   - id: default
