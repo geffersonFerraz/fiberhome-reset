@@ -2,19 +2,15 @@ package main
 
 import (
 	"context"
-	"embed"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"strings"
 	"sync"
-	"time"
-)
 
-//go:embed web/index.html
-var webFS embed.FS
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
+)
 
 // ── Event types ───────────────────────────────────────────────────────────────
 
@@ -33,9 +29,9 @@ const (
 )
 
 type Event struct {
-	Kind    Kind   `json:"kind"`
-	Level   Level  `json:"level"`
-	Message string `json:"message"`
+	Kind    Kind
+	Level   Level
+	Message string
 }
 
 // ── Session ───────────────────────────────────────────────────────────────────
@@ -50,111 +46,87 @@ type Session struct {
 
 var global = &Session{}
 
-// ── Server ────────────────────────────────────────────────────────────────────
+// ── UI ────────────────────────────────────────────────────────────────────────
 
 func main() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", serveIndex)
-	mux.HandleFunc("/api/start", handleStart)
-	mux.HandleFunc("/api/events", handleEvents)
-	mux.HandleFunc("/api/answer", handleAnswer)
+	a := app.New()
+	w := a.NewWindow("Reset Fiber Home")
+	w.Resize(fyne.NewSize(720, 520))
 
-	addr := ":8080"
-	fmt.Printf("Interface web disponível em http://localhost%s\n", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
-}
+	logWidget := widget.NewRichText()
+	logWidget.Wrapping = fyne.TextWrapWord
 
-func serveIndex(w http.ResponseWriter, r *http.Request) {
-	data, _ := webFS.ReadFile("web/index.html")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(data)
-}
+	scroll := container.NewScroll(logWidget)
 
-// ── Handlers ──────────────────────────────────────────────────────────────────
+	var startBtn *widget.Button
+	startBtn = widget.NewButton("Iniciar Reset", func() {
+		startBtn.Disable()
+		logWidget.Segments = nil
+		logWidget.Refresh()
 
-func handleStart(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	global.mu.Lock()
-	if global.running {
-		global.mu.Unlock()
-		http.Error(w, "already running", http.StatusConflict)
-		return
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	global.running = true
-	global.events = make(chan Event, 256)
-	global.answer = make(chan bool, 1)
-	global.cancel = cancel
-	global.mu.Unlock()
-
-	go runReset(ctx, global)
-	w.WriteHeader(http.StatusOK)
-}
-
-func handleEvents(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-
-	global.mu.Lock()
-	events := global.events
-	global.mu.Unlock()
-
-	if events == nil {
-		return
-	}
-
-	ctx := r.Context()
-	for {
-		select {
-		case <-ctx.Done():
+		global.mu.Lock()
+		if global.running {
+			global.mu.Unlock()
+			startBtn.Enable()
 			return
-		case ev, open := <-events:
-			if !open {
-				return
-			}
-			data, _ := json.Marshal(ev)
-			fmt.Fprintf(w, "data: %s\n\n", data)
-			flusher.Flush()
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		global.running = true
+		global.events = make(chan Event, 256)
+		global.answer = make(chan bool, 1)
+		global.cancel = cancel
+		global.mu.Unlock()
+
+		go runReset(ctx, global)
+		go consumeEvents(w, logWidget, scroll, startBtn)
+	})
+
+	w.SetContent(container.NewBorder(nil, container.NewPadded(startBtn), nil, nil, scroll))
+	w.ShowAndRun()
+}
+
+func levelColorName(level Level) fyne.ThemeColorName {
+	switch level {
+	case LevelSuccess:
+		return theme.ColorNameSuccess
+	case LevelError:
+		return theme.ColorNameError
+	case LevelWarning:
+		return theme.ColorNameWarning
+	default:
+		return theme.ColorNameForeground
+	}
+}
+
+func appendLog(richText *widget.RichText, scroll *container.Scroll, ev Event) {
+	fyne.Do(func() {
+		richText.Segments = append(richText.Segments, &widget.TextSegment{
+			Text:  ev.Message + "\n",
+			Style: widget.RichTextStyle{ColorName: levelColorName(ev.Level)},
+		})
+		richText.Refresh()
+		scroll.ScrollToBottom()
+	})
+}
+
+func consumeEvents(w fyne.Window, richText *widget.RichText, scroll *container.Scroll, btn *widget.Button) {
+	for ev := range global.events {
+		switch ev.Kind {
+		case KindQuestion:
+			done := make(chan struct{})
+			fyne.Do(func() {
+				dialog.NewConfirm("Confirmação", ev.Message, func(ok bool) {
+					global.answer <- ok
+					close(done)
+				}, w).Show()
+			})
+			<-done
+		case KindDone:
+			appendLog(richText, scroll, ev)
+			fyne.Do(func() { btn.Enable() })
+		default:
+			appendLog(richText, scroll, ev)
 		}
 	}
-}
-
-func handleAnswer(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	body, _ := io.ReadAll(r.Body)
-	accepted := strings.TrimSpace(string(body)) == "true"
-
-	global.mu.Lock()
-	ch := global.answer
-	global.mu.Unlock()
-
-	if ch == nil {
-		http.Error(w, "no pending question", http.StatusBadRequest)
-		return
-	}
-
-	select {
-	case ch <- accepted:
-	case <-time.After(5 * time.Second):
-		http.Error(w, "timeout", http.StatusGatewayTimeout)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
+	fyne.Do(func() { btn.Enable() })
 }

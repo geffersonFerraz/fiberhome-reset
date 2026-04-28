@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,10 +13,42 @@ import (
 const (
 	routerHost  = "192.168.1.1"
 	defaultPort = "8090"
-	usernameB64 = "YWRtaW4="
-	passwordB64 = "JTB8Rj9IQGYhYmVyaE8zZQ=="
 	userAgent   = "Mozilla/5.0 (X11; Linux x86_64; rv:150.0) Gecko/20100101 Firefox/150.0"
 )
+
+type credential struct {
+	user string
+	pass string
+}
+
+var credentials = []credential{
+	{"admin", "%0|F?H@f!berhO3e"},
+	{"user", "user1234"},
+	{"f~i!b@e#r$h%o^m*esuperadmin", "s(f)u_h+g|u"},
+	{"admin", "lnadmin"},
+	{"admin", "CUadmin"},
+	{"admin", "admin"},
+	{"telecomadmin", "nE7jA%5m"},
+	{"adminpldt", "z6dUABtl270qRxt7a2uGTiw"},
+	{"gestiontelebucaramanga", "t3l3buc4r4m4ng42013"},
+	{"rootmet", "m3tr0r00t"},
+	{"awnfibre", "fibre@dm!n"},
+	{"trueadmin", "admintrue"},
+	{"admin", "G0R2U1P2ag"},
+	{"admin", "3UJUh2VemEfUtesEchEC2d2e"},
+	{"admin", "888888"},
+	{"L1vt1m4eng", "888888"},
+	{"useradmin", "888888"},
+	{"user", "888888"},
+	{"admin", "1234"},
+	{"user", "tattoo@home"},
+	{"admin", "tele1234"},
+	{"admin", "aisadmin"},
+}
+
+func b64Param(s string) string {
+	return strings.ReplaceAll(base64.StdEncoding.EncodeToString([]byte(s)), "=", "%3D")
+}
 
 func newClient(timeout time.Duration) *http.Client {
 	return &http.Client{
@@ -66,7 +99,7 @@ func runReset(ctx context.Context, s *Session) {
 	if err := checkURL(ctx, baseURL); err != nil {
 		logf(LevelError, "Falha ao acessar %s: %v", baseURL, err)
 
-		if !ask("Deseja realizar um scan de portas em " + routerHost + " para localizar o serviço web do roteador?") {
+		if !ask("Deseja realizar um scan de todas as portas em " + routerHost + " para localizar o serviço web do roteador?") {
 			finish(LevelError, "Operação cancelada pelo usuário.")
 			return
 		}
@@ -99,7 +132,7 @@ func runReset(ctx context.Context, s *Session) {
 		}
 
 		if found == "" {
-			finish(LevelError, "Nenhuma página de login encontrada nas portas abertas. O roteador pode estar inacessível.")
+			finish(LevelError, "Nenhuma página de login encontrada nas portas abertas.")
 			return
 		}
 		baseURL = found
@@ -111,38 +144,31 @@ func runReset(ctx context.Context, s *Session) {
 	loginURL := baseURL + "/goform/webLogin"
 	loginReferer := "http://" + routerHost + "/login_inter.asp"
 
-	logf(LevelInfo, "[2] Realizando login em %s...", loginURL)
+	logf(LevelInfo, "[2] Tentando %d combinações de credenciais em %s...", len(credentials), loginURL)
 
-	body := "username=" + usernameB64 + "%3D&password=" + passwordB64 + "%3D"
-	loginReq, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(body))
-	if err != nil {
-		finish(LevelError, "Falha ao montar requisição de login: "+err.Error())
-		return
+	var fhstamp string
+	for i, cred := range credentials {
+		if ctx.Err() != nil {
+			return
+		}
+		logf(LevelInfo, "  [%d/%d] usuário: %s", i+1, len(credentials), cred.user)
+		stamp, err := tryLogin(ctx, loginURL, loginReferer, cred)
+		if err != nil {
+			logf(LevelWarning, "    ✗ erro na requisição: %v", err)
+			continue
+		}
+		if stamp != "" {
+			logf(LevelSuccess, "    ✓ Login OK com %q / %q", cred.user, cred.pass)
+			fhstamp = stamp
+			break
+		}
+		logf(LevelInfo, "    ✗ credenciais inválidas")
 	}
-	loginReq.Header.Set("User-Agent", userAgent)
-	loginReq.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-	loginReq.Header.Set("Accept-Language", "pt-BR")
-	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	loginReq.Header.Set("Origin", "http://"+routerHost)
-	loginReq.Header.Set("Referer", loginReferer)
-	loginReq.Header.Set("Upgrade-Insecure-Requests", "1")
-	loginReq.Header.Set("Pragma", "no-cache")
-	loginReq.Header.Set("Cache-Control", "no-cache")
 
-	loginResp, err := newClient(15 * time.Second).Do(loginReq)
-	if err != nil {
-		finish(LevelError, "Falha na requisição de login: "+err.Error())
-		return
-	}
-	defer loginResp.Body.Close()
-	io.Copy(io.Discard, loginResp.Body)
-
-	fhstamp := extractFhstamp(loginResp.Cookies())
 	if fhstamp == "" {
-		finish(LevelError, fmt.Sprintf("Login falhou — cookie 'fhstamp' ausente na resposta (HTTP %d).", loginResp.StatusCode))
+		finish(LevelError, fmt.Sprintf("Nenhuma das %d combinações funcionou.", len(credentials)))
 		return
 	}
-	logf(LevelSuccess, "Login realizado. Cookie: fhstamp=%s", fhstamp)
 
 	// ── Step 3: Factory reset ─────────────────────────────────────────────────
 	resetURL := baseURL + "/goform/adminRestore"
@@ -182,6 +208,32 @@ func runReset(ctx context.Context, s *Session) {
 	} else {
 		finish(LevelError, fmt.Sprintf("Resposta inesperada do roteador (HTTP %d).", resetResp.StatusCode))
 	}
+}
+
+func tryLogin(ctx context.Context, loginURL, referer string, cred credential) (string, error) {
+	body := "username=" + b64Param(cred.user) + "&password=" + b64Param(cred.pass)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, loginURL, strings.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "pt-BR")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://"+routerHost)
+	req.Header.Set("Referer", referer)
+	req.Header.Set("Upgrade-Insecure-Requests", "1")
+	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Cache-Control", "no-cache")
+
+	resp, err := newClient(10 * time.Second).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	return extractFhstamp(resp.Cookies()), nil
 }
 
 func checkURL(ctx context.Context, u string) error {

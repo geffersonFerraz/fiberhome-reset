@@ -1,50 +1,83 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os/exec"
-	"regexp"
-	"strings"
+	"net"
+	"sort"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"time"
 )
 
-var portRe = regexp.MustCompile(`^(\d+)/tcp\s+open`)
+const (
+	scanWorkers = 2000
+	scanTimeout = 400 * time.Millisecond
+	totalPorts  = 65535
+)
 
 func scanPorts(ctx context.Context, host string, s *Session) ([]string, error) {
-	if _, err := exec.LookPath("nmap"); err != nil {
-		return nil, fmt.Errorf("nmap não encontrado — instale com: sudo apt install nmap")
+	s.events <- Event{
+		Kind:    KindLog,
+		Level:   LevelInfo,
+		Message: fmt.Sprintf("Escaneando todas as %d portas em %s (%d workers simultâneos)...", totalPorts, host, scanWorkers),
 	}
 
-	args := []string{"--top-ports", "1000", "--open", "-T4", host}
-	s.events <- Event{Kind: KindLog, Level: LevelInfo, Message: "$ nmap " + strings.Join(args, " ")}
+	jobs := make(chan uint16, scanWorkers*2)
+	var mu sync.Mutex
+	var openPorts []int
+	var scanned atomic.Int32
+	var wg sync.WaitGroup
 
-	cmd := exec.CommandContext(ctx, "nmap", args...)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
+	for range scanWorkers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for port := range jobs {
+				if ctx.Err() != nil {
+					continue
+				}
+				addr := net.JoinHostPort(host, strconv.Itoa(int(port)))
+				conn, err := net.DialTimeout("tcp", addr, scanTimeout)
+				if err == nil {
+					conn.Close()
+					mu.Lock()
+					openPorts = append(openPorts, int(port))
+					mu.Unlock()
+					select {
+					case s.events <- Event{Kind: KindLog, Level: LevelSuccess, Message: fmt.Sprintf("  %d/tcp aberta", port)}:
+					case <-ctx.Done():
+					}
+				}
+				if n := scanned.Add(1); n%5000 == 0 {
+					pct := int(n) * 100 / totalPorts
+					select {
+					case s.events <- Event{Kind: KindLog, Level: LevelInfo, Message: fmt.Sprintf("  progresso: %d/%d portas (%d%%)...", n, totalPorts, pct)}:
+					default:
+					}
+				}
+			}
+		}()
 	}
 
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-
-	var ports []string
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Text()
+	for port := uint16(1); port < totalPorts; port++ {
 		select {
-		case s.events <- Event{Kind: KindLog, Level: LevelInfo, Message: "  " + line}:
 		case <-ctx.Done():
-			cmd.Process.Kill()
-			cmd.Wait()
+			close(jobs)
+			wg.Wait()
 			return nil, ctx.Err()
-		}
-		if m := portRe.FindStringSubmatch(line); len(m) > 1 {
-			ports = append(ports, m[1])
+		case jobs <- port:
 		}
 	}
+	jobs <- totalPorts
+	close(jobs)
+	wg.Wait()
 
-	cmd.Wait()
-	return ports, nil
+	sort.Ints(openPorts)
+	result := make([]string, len(openPorts))
+	for i, p := range openPorts {
+		result[i] = strconv.Itoa(p)
+	}
+	return result, nil
 }
