@@ -33,17 +33,12 @@ jobs:
       - name: Build Windows (amd64)
         run: fyne-cross windows --arch=amd64 --app-id=io.github.gfz.reset-fiber-home
 
-      - name: List fyne-cross output
-        run: find fyne-cross -type f | sort
-
       - name: Package artifacts
         run: |
           VERSION="${{ github.ref_name }}"
           mkdir -p release
-          tar czf release/reset-fiber-home_${VERSION}_linux_amd64.tar.gz \
-            -C fyne-cross/dist/linux-amd64 reset-fiber-home
-          zip -j release/reset-fiber-home_${VERSION}_windows_amd64.zip \
-            fyne-cross/dist/windows-amd64/reset-fiber-home.exe
+          cp fyne-cross/dist/linux-amd64/*.tar.xz   release/reset-fiber-home_${VERSION}_linux_amd64.tar.xz
+          cp fyne-cross/dist/windows-amd64/*.zip    release/reset-fiber-home_${VERSION}_windows_amd64.zip
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
