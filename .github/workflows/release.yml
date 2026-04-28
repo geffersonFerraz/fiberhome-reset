@@ -26,6 +26,18 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install fyne dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends \
+            libgl1-mesa-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxi-dev \
+            xorg-dev
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:
