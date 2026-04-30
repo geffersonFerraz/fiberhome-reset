@@ -17,7 +17,7 @@ const (
 	scanWorkers     = 2000
 	scanTimeout     = 400 * time.Millisecond
 	scanSlowWorkers = 50
-	scanSlowTimeout = 5 * time.Second
+	scanSlowTimeout = 600 * time.Millisecond
 	totalPorts      = 65535
 )
 
