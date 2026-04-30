@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"sort"
 	"strconv"
 	"sync"
@@ -12,25 +14,37 @@ import (
 )
 
 const (
-	scanWorkers = 2000
-	scanTimeout = 400 * time.Millisecond
-	totalPorts  = 65535
+	scanWorkers     = 2000
+	scanTimeout     = 400 * time.Millisecond
+	scanSlowWorkers = 50
+	scanSlowTimeout = 5 * time.Second
+	totalPorts      = 65535
 )
 
 func scanPorts(ctx context.Context, host string, s *Session) ([]string, error) {
+	slow := s.slowScan
+	workers := scanWorkers
+	if slow {
+		workers = scanSlowWorkers
+	}
+
+	mode := "TCP dial"
+	if slow {
+		mode = "HTTP GET"
+	}
 	s.events <- Event{
 		Kind:    KindLog,
 		Level:   LevelInfo,
-		Message: fmt.Sprintf("Escaneando todas as %d portas em %s (%d workers simultâneos)...", totalPorts, host, scanWorkers),
+		Message: fmt.Sprintf("Escaneando todas as %d portas em %s (%d workers, modo: %s)...", totalPorts, host, workers, mode),
 	}
 
-	jobs := make(chan uint16, scanWorkers*2)
+	jobs := make(chan uint16, workers*2)
 	var mu sync.Mutex
 	var openPorts []int
 	var scanned atomic.Int32
 	var wg sync.WaitGroup
 
-	for range scanWorkers {
+	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -38,10 +52,34 @@ func scanPorts(ctx context.Context, host string, s *Session) ([]string, error) {
 				if ctx.Err() != nil {
 					continue
 				}
-				addr := net.JoinHostPort(host, strconv.Itoa(int(port)))
-				conn, err := net.DialTimeout("tcp", addr, scanTimeout)
-				if err == nil {
-					conn.Close()
+				open := false
+				if slow {
+					u := fmt.Sprintf("http://%s:%d", host, port)
+					req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+					if err == nil {
+						req.Header.Set("User-Agent", userAgent)
+						client := &http.Client{
+							Timeout: scanSlowTimeout,
+							CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+								return http.ErrUseLastResponse
+							},
+						}
+						resp, err := client.Do(req)
+						if err == nil {
+							io.Copy(io.Discard, resp.Body)
+							resp.Body.Close()
+							open = true
+						}
+					}
+				} else {
+					addr := net.JoinHostPort(host, strconv.Itoa(int(port)))
+					conn, err := net.DialTimeout("tcp", addr, scanTimeout)
+					if err == nil {
+						conn.Close()
+						open = true
+					}
+				}
+				if open {
 					mu.Lock()
 					openPorts = append(openPorts, int(port))
 					mu.Unlock()

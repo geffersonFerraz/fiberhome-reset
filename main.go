@@ -37,11 +37,12 @@ type Event struct {
 // ── Session ───────────────────────────────────────────────────────────────────
 
 type Session struct {
-	mu      sync.Mutex
-	running bool
-	events  chan Event
-	answer  chan bool
-	cancel  context.CancelFunc
+	mu       sync.Mutex
+	running  bool
+	events   chan Event
+	answer   chan bool
+	cancel   context.CancelFunc
+	slowScan bool
 }
 
 var global = &Session{}
@@ -57,6 +58,12 @@ func main() {
 	logWidget.Wrapping = fyne.TextWrapWord
 
 	scroll := container.NewScroll(logWidget)
+
+	slowCheck := widget.NewCheck("Scan lento (HTTP GET, mais preciso porém mais lento)", func(checked bool) {
+		global.mu.Lock()
+		global.slowScan = checked
+		global.mu.Unlock()
+	})
 
 	var startBtn *widget.Button
 	startBtn = widget.NewButton("Iniciar Reset", func() {
@@ -81,7 +88,8 @@ func main() {
 		go consumeEvents(w, logWidget, scroll, startBtn)
 	})
 
-	w.SetContent(container.NewBorder(nil, container.NewPadded(startBtn), nil, nil, scroll))
+	bottom := container.NewVBox(slowCheck, container.NewPadded(startBtn))
+	w.SetContent(container.NewBorder(nil, bottom, nil, nil, scroll))
 	w.ShowAndRun()
 }
 
