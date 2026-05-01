@@ -48,10 +48,6 @@ func scanPorts(ctx context.Context, host string, s *Session) ([]string, error) {
 				open := false
 				if slow {
 					u := fmt.Sprintf("http://%s:%d", host, port)
-					select {
-					case s.events <- Event{Kind: KindLog, Level: LevelInfo, Message: fmt.Sprintf("  → %s...", u)}:
-					default:
-					}
 					req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 					if err == nil {
 						req.Header.Set("User-Agent", userAgent)
