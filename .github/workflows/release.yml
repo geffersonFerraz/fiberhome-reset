@@ -24,6 +24,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Install Fyne build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev
+
       - name: Run tests
         run: go test ./...
 
