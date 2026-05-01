@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -35,8 +36,11 @@ func loadConfig() {
 		return
 	}
 	defer f.Close()
+	parseConfig(f, &cfg)
+}
 
-	scanner := bufio.NewScanner(f)
+func parseConfig(r io.Reader, c *Config) {
+	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -51,22 +55,22 @@ func loadConfig() {
 		switch key {
 		case "scanWorkers":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
-				cfg.ScanWorkers = n
+				c.ScanWorkers = n
 			}
 		case "scanTimeout":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
-				cfg.ScanTimeout = time.Duration(n) * time.Millisecond
+				c.ScanTimeout = time.Duration(n) * time.Millisecond
 			}
 		case "scanSlowWorkers":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
-				cfg.ScanSlowWorkers = n
+				c.ScanSlowWorkers = n
 			}
 		case "scanSlowTimeout":
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
-				cfg.ScanSlowTimeout = time.Duration(n) * time.Millisecond
+				c.ScanSlowTimeout = time.Duration(n) * time.Millisecond
 			}
 		case "slowScan":
-			cfg.SlowScan = val == "true"
+			c.SlowScan = val == "true"
 		}
 	}
 }
