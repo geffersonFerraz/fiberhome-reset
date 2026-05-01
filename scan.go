@@ -10,22 +10,15 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
-const (
-	scanWorkers     = 2000
-	scanTimeout     = 400 * time.Millisecond
-	scanSlowWorkers = 50
-	scanSlowTimeout = 600 * time.Millisecond
-	totalPorts      = 65535
-)
+const totalPorts = 65535
 
 func scanPorts(ctx context.Context, host string, s *Session) ([]string, error) {
 	slow := s.slowScan
-	workers := scanWorkers
+	workers := cfg.ScanWorkers
 	if slow {
-		workers = scanSlowWorkers
+		workers = cfg.ScanSlowWorkers
 	}
 
 	mode := "TCP dial"
@@ -55,11 +48,15 @@ func scanPorts(ctx context.Context, host string, s *Session) ([]string, error) {
 				open := false
 				if slow {
 					u := fmt.Sprintf("http://%s:%d", host, port)
+					select {
+					case s.events <- Event{Kind: KindLog, Level: LevelInfo, Message: fmt.Sprintf("  → %s...", u)}:
+					default:
+					}
 					req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 					if err == nil {
 						req.Header.Set("User-Agent", userAgent)
 						client := &http.Client{
-							Timeout: scanSlowTimeout,
+							Timeout: cfg.ScanSlowTimeout,
 							CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 								return http.ErrUseLastResponse
 							},
@@ -73,7 +70,7 @@ func scanPorts(ctx context.Context, host string, s *Session) ([]string, error) {
 					}
 				} else {
 					addr := net.JoinHostPort(host, strconv.Itoa(int(port)))
-					conn, err := net.DialTimeout("tcp", addr, scanTimeout)
+					conn, err := net.DialTimeout("tcp", addr, cfg.ScanTimeout)
 					if err == nil {
 						conn.Close()
 						open = true
@@ -88,7 +85,11 @@ func scanPorts(ctx context.Context, host string, s *Session) ([]string, error) {
 					case <-ctx.Done():
 					}
 				}
-				if n := scanned.Add(1); n%5000 == 0 {
+				interval := int32(5000)
+				if slow {
+					interval = 1000
+				}
+				if n := scanned.Add(1); n%interval == 0 {
 					pct := int(n) * 100 / totalPorts
 					select {
 					case s.events <- Event{Kind: KindLog, Level: LevelInfo, Message: fmt.Sprintf("  progresso: %d/%d portas (%d%%)...", n, totalPorts, pct)}:

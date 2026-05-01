@@ -50,6 +50,8 @@ var global = &Session{}
 // ── UI ────────────────────────────────────────────────────────────────────────
 
 func main() {
+	loadConfig()
+
 	a := app.New()
 	w := a.NewWindow("Reset Fiber Home")
 	w.Resize(fyne.NewSize(720, 520))
@@ -59,11 +61,13 @@ func main() {
 
 	scroll := container.NewScroll(logWidget)
 
+	global.slowScan = cfg.SlowScan
 	slowCheck := widget.NewCheck("Scan lento (HTTP GET, mais preciso porém mais lento)", func(checked bool) {
 		global.mu.Lock()
 		global.slowScan = checked
 		global.mu.Unlock()
 	})
+	slowCheck.Checked = cfg.SlowScan
 
 	var startBtn *widget.Button
 	startBtn = widget.NewButton("Iniciar Reset", func() {
